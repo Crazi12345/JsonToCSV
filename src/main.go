@@ -1,37 +1,38 @@
 package main
 
 import (
-	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
+    "bufio"
 	"reflect"
 )
 
 type User struct {
 	Hireable      *bool          `json:"hirable"`
-	PublicRepos   *int64           `json:"public_repos"`
+	PublicRepos   *int64         `json:"public_repos"`
 	IsSuspicious  *bool          `json:"is_suspicious"`
 	UpdatedAt     *string        `json:"updated_at"`
 	ID            *int64         `json:"id"`
 	Blog          *string        `json:"blog"`
-	Followers     *int64           `json:"followers"`
+	Followers     *int64         `json:"followers"`
 	Location      *string        `json:"location"`
 	FollowerList  *[]interface{} `json:"follower_list"`
 	Type          *string        `json:"type"`
 	CommitList    *[]Commit      `json:"commit_list"`
 	Bio           *string        `json:"bio"`
-	Commits       *int64           `json:"commits"`
+	Commits       *int64         `json:"commits"`
 	Company       *string        `json:"company"`
 	FollowingList *[]interface{} `json:"following_list"`
-	PublicGists   *int64           `json:"public_gists"`
+	PublicGists   *int64         `json:"public_gists"`
 	Name          *string        `json:"name"`
 	CreatedAt     *string        `json:"created_at"`
 	Email         *string        `json:"email"`
-	Following     *int64           `json:"following"`
+	Following     *int64         `json:"following"`
 	Login         *string        `json:"login"`
 	RepoList      *[]Repo        `json:"repo_list"`
 }
@@ -56,20 +57,20 @@ type Repo struct {
 	Language        *string `json:"language"`
 	DefaultBranch   *string `json:"default_branch"`
 	CreatedAt       *string `json:"created_at"`
-	ForksCount      *int64    `json:"forks_count"`
+	ForksCount      *int64  `json:"forks_count"`
 	UpdatedAt       *string `json:"updated_at"`
 	PushedAt        *string `json:"pushed_at"`
 	FullName        *string `json:"full_name"`
-	OpenIssues      *int64    `json:"open_issues"`
-	StargazersCount *int64    `json:"stargazers_count"`
+	OpenIssues      *int64  `json:"open_issues"`
+	StargazersCount *int64  `json:"stargazers_count"`
 	OwnerID         *int64  `json:"owner_id"`
 	ID              *int64  `json:"id"`
-	Size            *int64    `json:"size"`
+	Size            *int64  `json:"size"`
 }
 
-var test_commit_file_location = "/home/tired_atlas/Desktop/test_commit.csv"
-var test_repo_file_location = "/home/tired_atlas/Desktop/test_repo.csv"
-var test_user_file_location = "/home/tired_atlas/Desktop/test_user.csv"
+var test_commit_file_location = "/home/tired_atlas/Desktop/100k_Commits.csv"
+var test_repo_file_location = "/home/tired_atlas/Desktop/100k_Repos.csv"
+var test_user_file_location = "/home/tired_atlas/Desktop/100k_Users.csv"
 
 func check(e error, message string) {
 	if e != nil {
@@ -101,28 +102,38 @@ func writeHeadersFromStruct(s interface{}, file_location string) []string {
 }
 
 func popLine(f *os.File) ([]byte, error) {
-	fi, err := f.Stat()
-	check(err, "file statistics failed")
-	buf := bytes.NewBuffer(make([]byte, 0, fi.Size()))
+	// Use tail to get the first line from the file
+	cmd := exec.Command("tail", "-n", "1", f.Name())
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
 
-	_, err = f.Seek(0, io.SeekStart)
-	check(err, "seek failed")
-
-	_, err = io.Copy(buf, f)
-	check(err, "copy failed")
-
-	line, err := buf.ReadBytes('\n')
+	// Read the output from tail
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadBytes('\n')
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
 
-	_, err = f.Seek(0, io.SeekStart)
-	check(err, "seek failed")
+	if err := cmd.Wait(); err != nil {
+		return nil, err
+	}
 
-	nw, err := io.Copy(f, buf)
-	check(err, "copy failed")
+	// Truncate the original file by one line
+	fi, err := f.Stat()
+	check(err, "file statistics failed")
 
-	err = f.Truncate(nw)
+	// Calculate the new size of the file after removing the first line
+	newSize := fi.Size() - int64(len(line))
+	if newSize < 0 {
+		newSize = 0
+	}
+
+	err = f.Truncate(newSize)
 	check(err, "truncating failed")
 
 	err = f.Sync()
@@ -137,21 +148,21 @@ func subJsonToCSV(text interface{}) (string, error) {
 	writer := csv.NewWriter(file)
 	defer file.Close()
 	defer writer.Flush()
-    ids := ""
+	ids := ""
 	switch v := text.(type) {
 	case []Commit:
-		file, err = os.OpenFile(test_commit_file_location, os.O_RDWR|os.O_APPEND, 0644)
+		file, err = os.OpenFile(test_commit_file_location, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
 		check(err, "Failed to open meme.csv")
 		defer file.Close()
 		writer = csv.NewWriter(file)
-		ids,_ = writeSlice(v, writer, 3)
+		ids, _ = writeSlice(v, writer, 3)
 
 	case []Repo:
 		file, err = os.OpenFile(test_repo_file_location, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
 		check(err, "Failed to open meme2.csv")
 		defer file.Close()
 		writer = csv.NewWriter(file)
-		ids,_ = writeSlice(v, writer, 13)
+		ids, _ = writeSlice(v, writer, 13)
 
 	default:
 		return "unknown", fmt.Errorf("unsupported type: %T", text)
@@ -197,59 +208,59 @@ func writeSlice(slice interface{}, writer *csv.Writer, idIndex int) (string, err
 	return result, nil
 }
 func UserToCSV(user User) {
-    file, err := os.OpenFile(test_user_file_location, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
-    check(err, "Filed to open test_commit")
+	file, err := os.OpenFile(test_user_file_location, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
+	check(err, "Filed to open test_commit")
 
-    defer file.Close()
-    writer := csv.NewWriter(file)
-    v := reflect.ValueOf(user)
+	defer file.Close()
+	writer := csv.NewWriter(file)
+	v := reflect.ValueOf(user)
 
-    var record []string
-    for i := 0; i < v.NumField(); i++ {
-        field := v.Field(i)
-        fi := v.Field(i)
+	var record []string
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		fi := v.Field(i)
 
-        if !field.IsNil() {
-            field = field.Elem()
-        }
+		if !field.IsNil() {
+			field = field.Elem()
+		}
 
-        switch i {
-        case 8, 14: // Handle FollowerList and FollowingList
-            if fi.IsNil() {
-                record = append(record, "null")
-                continue
-            }
+		switch i {
+		case 8, 14: // Handle FollowerList and FollowingList
+			if fi.IsNil() {
+				record = append(record, "null")
+				continue
+			}
 
-            var ids string
-            for j, item := range field.Interface().([]interface{}) {
-                if j > 0 {
-                    ids += ";"
-                }
-                ids += fmt.Sprintf("%v", item)
-            }
-            record = append(record, ids)
+			var ids string
+			for j, item := range field.Interface().([]interface{}) {
+				if j > 0 {
+					ids += ";"
+				}
+				ids += fmt.Sprintf("%v", item)
+			}
+			record = append(record, ids)
 
-        case 10, 21: // Handle CommitList and RepoList
-            if fi.IsNil() {
-                record = append(record, "null")
-                continue
-            }
+		case 10, 21: // Handle CommitList and RepoList
+			if fi.IsNil() {
+				record = append(record, "null")
+				continue
+			}
 
-            ids, err := subJsonToCSV(field.Interface())
-            check(err, "Error in subJsonToCSV")
-            record = append(record, ids)
+			ids, err := subJsonToCSV(field.Interface())
+			check(err, "Error in subJsonToCSV")
+			record = append(record, ids)
 
-        default:
-            if fi.IsNil() {
-                record = append(record, "null")
-                continue
-            }
-            record = append(record, fmt.Sprintf("%v", field.Interface()))
-        }
-    }
+		default:
+			if fi.IsNil() {
+				record = append(record, "null")
+				continue
+			}
+			record = append(record, fmt.Sprintf("%v", field.Interface()))
+		}
+	}
 
-    writer.Write(record)
-    defer writer.Flush()
+	writer.Write(record)
+	defer writer.Flush()
 }
 func main() {
 	var user User
@@ -263,12 +274,12 @@ func main() {
 	check(err, "Could not open file")
 	defer file.Close()
 	//for i := 0; i < 10649574; i++ {
-    procent := 0
-    for i := 0; i < 10000; i++ {
-        if i%100==0 {
-    procent++
-            fmt.Printf("%d %%\n",procent)
-        }
+	procent := 0
+	for i := 0; i < 100000; i++ {
+		if i%1000 == 0 {
+			procent++
+			fmt.Printf("%d %%\n", procent)
+		}
 		data, err := popLine(file)
 		check(err, "could not read file")
 		var user User
